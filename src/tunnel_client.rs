@@ -919,11 +919,15 @@ async fn fire_batch(
         )
         .await;
         let sid_short = &script_id[..script_id.len().min(8)];
+        let rtt = t0.elapsed();
+        // Here we give some room for the timeout (x 4 + 1) based on rtt
+        f.set_h1_timeout((rtt.as_secs() * 4 + 1).clamp(8, 20));
+
         tracing::info!(
             "batch: {} ops → {}, rtt={:?}",
             n_ops,
             sid_short,
-            t0.elapsed()
+            rtt
         );
 
         match result {

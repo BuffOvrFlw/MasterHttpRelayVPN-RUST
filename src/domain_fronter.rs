@@ -367,6 +367,10 @@ pub struct DomainFronter {
     relay_calls: AtomicU64,
     relay_failures: AtomicU64,
     bytes_relayed: AtomicU64,
+    /// We adjust H1OPENTIMEOUT dynamically based on how user's network
+    /// operates, so that they won't experience things like h1 open timed out after 8s
+    /// Which would happen because of network's latency & how it operates.
+    h1_open_timeout: AtomicU64,
     /// Relay calls that successfully completed over the h2 fast path,
     /// across **all** entry points: Apps-Script direct relays,
     /// exit-node outer calls, full-mode tunnel single ops, and
@@ -613,6 +617,7 @@ impl DomainFronter {
             relay_calls: AtomicU64::new(0),
             relay_failures: AtomicU64::new(0),
             bytes_relayed: AtomicU64::new(0),
+            h1_open_timeout: AtomicU64::new(8),
             h2_calls: AtomicU64::new(0),
             h2_fallbacks: AtomicU64::new(0),
             per_site: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -899,6 +904,14 @@ impl DomainFronter {
         counts.remove(script_id);
     }
 
+    pub(crate) fn set_h1_timeout(&self, val: u64) {
+        self.h1_open_timeout.store(val, Ordering::SeqCst)
+    }
+
+    pub(crate) fn get_h1_timeout(&self) -> u64 {
+        self.h1_open_timeout.load(Ordering::SeqCst)
+    }
+
     /// Log a relay failure with extra guidance on cert-validation cases.
     /// Rate-limited so a flood of identical "UnknownIssuer" errors doesn't
     /// fill the log.
@@ -957,11 +970,12 @@ impl DomainFronter {
             let tls = self.tls_connector_h1.connect(name, tcp).await?;
             Ok::<_, FronterError>(tls)
         };
-        match tokio::time::timeout(Duration::from_secs(H1_OPEN_TIMEOUT_SECS), work).await {
+        let h1_open_timeout = self.get_h1_timeout();
+        match tokio::time::timeout(Duration::from_secs(h1_open_timeout), work).await {
             Ok(r) => r,
             Err(_) => Err(FronterError::Relay(format!(
                 "h1 open timed out after {}s",
-                H1_OPEN_TIMEOUT_SECS
+                h1_open_timeout
             ))),
         }
     }
